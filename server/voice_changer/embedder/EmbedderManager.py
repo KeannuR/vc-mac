@@ -1,9 +1,10 @@
+import os
+import sys
 from const import EmbedderType
 from voice_changer.embedder.Embedder import Embedder
 from voice_changer.embedder.OnnxEmbedder import OnnxEmbedder
 from downloader.PretrainList import embedders
 import logging
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,13 @@ class EmbedderManager:
 
         if not os.path.exists(model_path):
             raise FileNotFoundError(f'Embedder model file not found at {model_path}. Please download it first.')
+
+        if sys.platform == 'darwin':
+            try:
+                from voice_changer.embedder.CoreMLEmbedder import CoreMLEmbedder
+                return CoreMLEmbedder().load_model(model_path)
+            except Exception as e:
+                logger.warning(f'CoreML embedder unavailable ({e}), falling back to ONNX.')
 
         return OnnxEmbedder().load_model(model_path)
 

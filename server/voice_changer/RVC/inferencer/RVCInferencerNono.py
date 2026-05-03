@@ -17,12 +17,12 @@ class RVCInferencerNono(Inferencer):
 
         # Keep torch.load for backward compatibility, but discourage the use of this loading method
         if file.endswith('.safetensors'):
-            with safe_open(file, 'pt', device=str(dev) if dev.type == 'cuda' else 'cpu') as cpt:
+            with safe_open(file, 'pt', device=str(dev)) as cpt:
                 config = json.loads(cpt.metadata()['config'])
                 model = SynthesizerTrnMs256NSFsid_nono(*config, is_half=is_half).to(dev)
                 load_model(model, cpt, strict=False)
         else:
-            cpt = torch.load(file, map_location=dev if dev.type == 'cuda' else 'cpu')
+            cpt = torch.load(file, map_location=dev)
             model = SynthesizerTrnMs256NSFsid_nono(*cpt["config"], is_half=is_half).to(dev)
             model.load_state_dict(cpt["weight"], strict=False)
 

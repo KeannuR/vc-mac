@@ -20,12 +20,12 @@ class RVCInferencerv2(Inferencer):
 
         # Keep torch.load for backward compatibility, but discourage the use of this loading method
         if file.endswith('.safetensors'):
-            with safe_open(file, 'pt', device=str(dev) if dev.type == 'cuda' else 'cpu') as cpt:
+            with safe_open(file, 'pt', device=str(dev)) as cpt:
                 config = json.loads(cpt.metadata()['config'])
                 model = SynthesizerTrnMs768NSFsid(*config, is_half=is_half).to(dev)
                 load_model(model, cpt, strict=False)
         else:
-            cpt = torch.load(file, map_location=dev if dev.type == 'cuda' else 'cpu')
+            cpt = torch.load(file, map_location=dev)
             model = SynthesizerTrnMs768NSFsid(*cpt["config"], is_half=is_half).to(dev)
             model.load_state_dict(cpt["weight"], strict=False)
         model = model.eval()
@@ -35,12 +35,15 @@ class RVCInferencerv2(Inferencer):
         if is_half:
             model = model.half()
 
-        self.use_jit_eager = not use_jit_compile
-        if use_jit_compile:
-            logger.info('Compiling JIT model...')
-            model = torch.jit.optimize_for_inference(torch.jit.script(model), other_methods=['infer'])
-
         self.model = model
+        if use_jit_compile:
+            # torch.compile only wraps forward(); compile infer() directly.
+            # aot_eager works on all backends; inductor adds further kernel fusion on CUDA/CPU.
+            backend = 'aot_eager' if dev.type == 'mps' else 'inductor'
+            logger.info(f'Compiling model.infer with torch.compile (backend={backend})...')
+            self._infer = torch.compile(model.infer, backend=backend, dynamic=True)
+        else:
+            self._infer = model.infer
         return self
 
     def infer(
@@ -56,16 +59,15 @@ class RVCInferencerv2(Inferencer):
     ) -> torch.Tensor:
         assert pitch is not None or pitchf is not None, "Pitch or Pitchf is not found."
 
-        with torch.jit.optimized_execution(self.use_jit_eager):
-            res = self.model.infer(
-                feats,
-                pitch_length,
-                pitch,
-                pitchf,
-                sid,
-                skip_head=skip_head,
-                return_length=return_length,
-                formant_length=formant_length
-            )
+        res = self._infer(
+            feats,
+            pitch_length,
+            pitch,
+            pitchf,
+            sid,
+            skip_head=skip_head,
+            return_length=return_length,
+            formant_length=formant_length
+        )
         res = res[0][0, 0]
         return torch.clip(res, -1.0, 1.0, out=res)

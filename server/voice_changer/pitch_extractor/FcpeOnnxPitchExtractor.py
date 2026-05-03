@@ -22,6 +22,7 @@ class FcpeOnnxPitchExtractor(PitchExtractor):
             onnxProviders,
             onnxProviderOptions,
         ) = device_manager.get_onnx_execution_provider()
+        self.use_cuda_provider = "CUDAExecutionProvider" in onnxProviders
 
         model = load_onnx_model(file, self.is_half)
 
@@ -54,7 +55,7 @@ class FcpeOnnxPitchExtractor(PitchExtractor):
     ) -> torch.Tensor:
         mel = self.mel_extractor(audio.unsqueeze(0).float())
 
-        if audio.device.type == 'cuda':
+        if audio.device.type == 'cuda' and self.use_cuda_provider:
             binding = self.onnx_session.io_binding()
 
             binding.bind_input('mel', device_type='cuda', device_id=audio.device.index, element_type=self.fp_dtype_np, shape=tuple(mel.shape), buffer_ptr=mel.contiguous().data_ptr())

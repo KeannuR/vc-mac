@@ -14,10 +14,14 @@ class OnnxEmbedder(Embedder):
             onnxProviders,
             onnxProviderOptions,
         ) = device_manager.get_onnx_execution_provider()
+        self.use_cuda_provider = "CUDAExecutionProvider" in onnxProviders
 
+        self.is_half = self.is_half and self.use_cuda_provider
         model = load_onnx_model(file, self.is_half, device_manager.is_int8_avalable())
 
         so = onnxruntime.SessionOptions()
+        # ORT_ENABLE_ALL causes SimplifiedLayerNormFusion to conflict with InsertedPrecisionFreeCast nodes
+        so.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_BASIC
         # so.log_severity_level = 3
         # so.enable_profiling = True
         # so.add_free_dimension_override_by_name('audio_dynamic_axes_1', 45600)
@@ -30,7 +34,7 @@ class OnnxEmbedder(Embedder):
     def extract_features(
         self, feats: torch.Tensor, embOutputLayer=9, useFinalProj=True
     ) -> torch.Tensor:
-        if feats.device.type == 'cuda':
+        if feats.device.type == 'cuda' and self.use_cuda_provider:
             binding = self.onnx_session.io_binding()
 
             binding.bind_input('audio', device_type='cuda', device_id=feats.device.index, element_type=self.fp_dtype_np, shape=tuple(feats.shape), buffer_ptr=feats.data_ptr())
@@ -43,7 +47,7 @@ class OnnxEmbedder(Embedder):
         else:
             units = self.onnx_session.run(
                 ['units9', 'unit12', 'unit12s'],
-                { 'audio': feats.detach().cpu().numpy() }
+                { 'audio': feats.detach().to(dtype=self.fp_dtype_t).cpu().numpy() }
             )
         # self.onnx_session.end_profiling()
 

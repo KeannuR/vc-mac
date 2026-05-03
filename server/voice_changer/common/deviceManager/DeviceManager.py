@@ -1,9 +1,9 @@
+import os
 import torch
 import onnxruntime
 import re
 import threading
 from typing import TypedDict, Literal
-from enum import IntFlag
 
 try:
     import torch_directml
@@ -13,12 +13,6 @@ except ImportError:
 import logging
 logger = logging.getLogger(__name__)
 
-class CoreMLFlag(IntFlag):
-    USE_CPU_ONLY = 0x001
-    ENABLE_ON_SUBGRAPH = 0x002
-    ONLY_ENABLE_DEVICE_WITH_ANE = 0x004
-    ONLY_ALLOW_STATIC_INPUT_SHAPES = 0x008
-    CREATE_MLPROGRAM = 0x010
 
 class DevicePresentation(TypedDict):
     id: int
@@ -136,10 +130,11 @@ class DeviceManager(object):
         return devices
 
     def get_onnx_execution_provider(self):
+        num_threads = os.cpu_count() or 8
         cpu_settings = {
-            "intra_op_num_threads": 8,
+            "intra_op_num_threads": num_threads,
             "execution_mode": onnxruntime.ExecutionMode.ORT_PARALLEL,
-            "inter_op_num_threads": 8,
+            "inter_op_num_threads": num_threads,
         }
         availableProviders = onnxruntime.get_available_providers()
         if self.device.type == 'cuda' and "ROCMExecutionProvider" in availableProviders:
@@ -149,8 +144,11 @@ class DeviceManager(object):
         elif self.device.type == 'privateuseone' and "DmlExecutionProvider" in availableProviders:
             return ["DmlExecutionProvider", "CPUExecutionProvider"], [{"device_id": self.device.index}, cpu_settings]
         elif 'CoreMLExecutionProvider' in availableProviders:
-            coreml_flags = CoreMLFlag.ONLY_ENABLE_DEVICE_WITH_ANE
-            return ["CoreMLExecutionProvider", "CPUExecutionProvider"], [{'coreml_flags': coreml_flags}, cpu_settings]
+            # onnxruntime >= 1.16 uses individual string options; older versions used the coreml_flags int bitmask.
+            # MLProgram format gives better ANE utilization on Apple Silicon.
+            # EnableOnSubgraphs allows partial offload so unsupported ops fall back to CPU.
+            coreml_options = {"EnableOnSubgraphs": "1"}
+            return ["CoreMLExecutionProvider", "CPUExecutionProvider"], [coreml_options, cpu_settings]
         else:
             return ["CPUExecutionProvider"], [cpu_settings]
 
